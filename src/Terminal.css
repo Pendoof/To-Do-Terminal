@@ -1,0 +1,53 @@
+#terminal-container {
+    overflow-y: scroll;
+    scroll-snap-type: y mandatory;
+    scroll-behavior: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+#terminal-container::-webkit-scrollbar {
+    display: none;
+}
+
+#terminal-log {
+    padding: 4rem 1rem 0 1rem;
+    display: flex;
+    flex-direction: column;
+    white-space: pre-wrap;
+}
+
+#terminal-input {
+    scroll-snap-align: end;
+    padding: 0 1rem 1rem 1rem;
+}
+
+.address {
+    color: #00ffff;
+}
+
+#input {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    font-size: 1rem;
+}
+
+.prompt {
+    margin-right: 0.5rem;
+    user-select: none;
+    font-size: 1rem;
+    color: #00ca56;
+}
+
+.cmd {
+    scroll-snap-align: end;
+    flex: 1;
+    display: flex;
+    outline: none;
+    color: rgb(226, 226, 226);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    min-width: 0;
+}
