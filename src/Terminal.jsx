@@ -1,16 +1,107 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useReducer, useState } from "react";
 import "./Terminal.css";
+
+const INITIAL_STATE = {
+    cwd: "C:/",
+    fs: {
+        "C:/": { type: "dir", children: [] },
+    },
+    error: null,
+};
+
+function join(a, b) {
+    return a.endsWith("/") ? a + b : a + "/" + b;
+}
+
+function reducer(state, action) {
+    switch (action.type) {
+        case "MKDIR": {
+            const path = join(state.cwd, action.name);
+            if (state.fs[path]) return state;
+
+            return {
+                ...state,
+                fs: {
+                    ...state.fs,
+                    [state.cwd]: {
+                        ...state.fs[state.cwd],
+                        children: [...state.fs[state.cwd].children, action.name],
+                    },
+                    [path]: { type: "dir", children: [] },
+                },
+            };
+        }
+
+        case "ADD": {
+            const path = join(state.cwd, action.name);
+            if (state.fs[path]) return state;
+
+            return {
+                ...state,
+                fs: {
+                    ...state.fs,
+                    [state.cwd]: {
+                        ...state.fs[state.cwd],
+                        children: [...state.fs[state.cwd].children, action.name],
+                    },
+                    [path]: {
+                        type: "task",
+                    },
+                },
+            };
+        }
+
+        case "CD": {
+            let target;
+
+            if (action.path === "..") {
+                target = state.cwd.split("/").slice(0, -1).join("/") || "C:/";
+            } else if (action.path.startsWith("C:/")) {
+                target = action.path;
+            } else {
+                target = join(state.cwd, action.path);
+            }
+
+            if (!state.fs[target] || state.fs[target].type !== "dir") {
+                return { ...state, error: `cd: not a directory: ${action.path}` };
+            }
+
+            return { ...state, cwd: target, error: null };
+        }
+
+        case "REMOVE": {
+            const path = join(state.cwd, action.name);
+
+            if (!state.fs[path]) return state;
+
+            const { [path]: removed, ...newFs } = state.fs;
+
+            return {
+                ...state,
+                fs: {
+                    ...newFs,
+                    [state.cwd]: {
+                        ...state.fs[state.cwd],
+                        children: state.fs[state.cwd].children.filter(
+                            (child) => child !== action.name
+                        ),
+                    },
+                },
+            };
+        }
+
+        default:
+            return state;
+    }
+}
 
 export default function Terminal({}) {
     const cmdlineRef = useRef(null);
     const scrollContainer = useRef(null);
     const [log, setLog] = useState([]);
-    // TODO: Replace with actual user address logic
-    const [address, setAddress] = useState("@User");
+    const [address, setAddress] = useState("C:/");
     const [input, setInput] = useState("");
-    const [suggestions, setSuggestions] = useState([]);
-    const [suggestionIndex, setSuggestionIndex] = useState(0);
-    const [refreshSuggestions, setRefreshSuggestions] = useState(true);
+    const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
 
     const COMMANDS = {
         // System commands
@@ -23,29 +114,14 @@ export default function Terminal({}) {
         new: "Alias for add",
         ls: "List to-do items",
         list: "Alias for ls",
-        view: "View details of a to-do item",
-        edit: "Edit an existing to-do item",
         rm: "Remove a to-do item by its name",
         del: "Alias for rm",
         complete: "Mark a to-do item as completed",
-        uncomplete: "Mark a completed to-do item as active",
 
         // Organization / navigation
         mkdir: "Create a new to-do category",
         cd: "Change to a different to-do category",
         pwd: "Show current to-do category",
-        mv: "Move a to-do item to another category",
-        rename: "Rename a to-do category",
-
-        // Filtering & search
-        find: "Search to-do items by keyword",
-        filter: "Filter to-do items by status or priority",
-        sort: "Sort to-do items (by date, priority, or status)",
-
-        // Metadata
-        priority: "Set or change priority of a to-do item",
-        due: "Set or update a due date",
-        tag: "Add or remove tags from a to-do item",
 
         // Session data storage
         save: "Save session state to browser storage",
@@ -69,6 +145,129 @@ export default function Terminal({}) {
         placeCaretAtEnd(cmdlineRef.current);
     }
 
+    function print(text) {
+        setLog((prev) => [...prev, { prompt: state.cwd, text }]);
+    }
+
+    function handleCommand(raw) {
+        const [cmd, ...args] = raw.trim().split(" ");
+        const name = args.join(" ");
+
+        switch (cmd) {
+            case "mkdir": {
+                if (args.length === 0) {
+                    print("mkdir: missing name. Usage: mkdir <name>");
+                    break;
+                }
+                dispatch({ type: "MKDIR", name });
+                print(raw);
+                break;
+            }
+
+            case "new":
+            case "add": {
+                if (args.length === 0) {
+                    print(`${cmd}: missing name. Usage: ${cmd} <name>`);
+                    break;
+                }
+                dispatch({ type: "ADD", name });
+                print(raw);
+                break;
+            }
+
+            case "cd": {
+                if (args.length === 0) {
+                    setLog((prev) => [
+                        ...prev,
+                        address,
+                        "cd: missing folder. Usage: cd <directory>",
+                    ]);
+                    break;
+                }
+                dispatch({ type: "CD", path: args[0] });
+                print(raw);
+                setAddress(state.cwd);
+                break;
+            }
+
+            case "pwd": {
+                print(state.cwd);
+                break;
+            }
+
+            case "list":
+            case "ls": {
+                const dir = state.fs[state.cwd];
+                if (!dir) {
+                    print("Invalid directory");
+                    return;
+                }
+                
+                const folders = [];
+                const tasks = [];
+
+                dir.children.forEach((name) => {
+                    const node = state.fs[join(state.cwd, name)];
+                    if (!node) return;
+
+                    if (node.type === "dir") {
+                        folders.push(name + "/");
+                    } else {
+                        tasks.push(name);
+                    }
+                });
+
+                const children = [...folders, ...tasks];
+
+                print(children.join("  ") || "No items found");
+                break;
+            }
+
+            case "remove":
+            case "rm": {
+                if (args.length === 0) {
+                    print(`${cmd}: missing name. Usage: ${cmd} <name>`);
+                    break;
+                }
+
+                dispatch({ type: "REMOVE", name });
+                print(raw);
+                break;
+            }
+
+            case "help": {
+                if (args.length === 0) {
+                    // General help
+                    print(
+                        `Available commands:\n${Object.entries(COMMANDS)
+                            .map(([cmd, desc]) => `${cmd.padEnd(12)} ${desc}`)
+                            .join("\n")}`
+                    );
+                } else {
+                    // Help for a specific command
+                    const target = args[0];
+                    if (COMMANDS[target]) {
+                        print(`${target}: ${COMMANDS[target]}`);
+                    } else {
+                        print(`help: unknown command "${target}"`);
+                    }
+                }
+                break;
+            }
+
+            case "clear":
+            case "cls": {
+                setLog([]);
+                break;
+            }
+
+            default: {
+                print(`Error: Command "${input.trim()}" not found. Type "help" for a list of commands.`);
+                break;
+            }
+        }
+    }
+
     useEffect(() => {
         const handleKeyDown = (e) => {
             // Adds alphanumeric characters to input even when cmdline is not focused and focuses it
@@ -77,95 +276,15 @@ export default function Terminal({}) {
                     e.preventDefault();
                     cmdlineRef.current.focus();
                     setCmdline(input + e.key);
-                    setSuggestions([]);
-                    setSuggestionIndex(0);
-                    setRefreshSuggestions(true);
-                }
-            }
-
-            // Handles Tab key for autocomplete
-            if (e.key === "Tab") {
-                e.preventDefault();
-                const text = cmdlineRef.current.textContent.trim().toLowerCase();
-                const parts = text.split(/\s+/);
-                let matches = suggestions;
-                let refresh = refreshSuggestions;
-                // autocomplete only for first part (command name)
-                if (parts.length === 1) {
-                    if (refresh || text === "") {
-                        matches = Object.keys(COMMANDS).filter((cmd) =>
-                            // modify to work with multiple parts
-                            cmd.startsWith(parts[0])
-                        );
-                        setSuggestions(matches);
-                        setSuggestionIndex(0);
-                        setRefreshSuggestions(false);
-                    }
-
-                    // Use the stored matches from state for cycling
-                    if (matches.length === 0) return;
-                    const next = matches[suggestionIndex % matches.length];
-                    setSuggestionIndex((i) => i + 1);
-                    setCmdline(next);
                 }
             }
 
             // Handles Enter key to submit command
             if (e.key === "Enter") {
                 e.preventDefault();
-                const [command, ...args] = input.trim().toLowerCase().split(" ");
-                switch (command) {
-                    case "help": {
-                        if (args.length === 0) {
-                            // General help
-                            setLog((prev) => [
-                                ...prev,
-                                address,
-                                `Available commands:\n${Object.entries(COMMANDS)
-                                    .map(([cmd, desc]) => `${cmd.padEnd(12)} ${desc}`)
-                                    .join("\n")}`,
-                            ]);
-                        } else {
-                            // Help for a specific command
-                            const target = args[0];
-                            if (COMMANDS[target]) {
-                                setLog((prev) => [
-                                    ...prev,
-                                    address,
-                                    `${target}: ${COMMANDS[target]}`,
-                                ]);
-                            } else {
-                                setLog((prev) => [
-                                    ...prev,
-                                    address,
-                                    `help: unknown command '${target}'`,
-                                ]);
-                            }
-                        }
-                        break;
-                    }
-                    case "clear":
-                    case "cls": {
-                        setLog([]);
-                        break;
-                    }
-
-                    // TODO: Implement other commands here
-
-                    default: {
-                        setLog((prev) => [
-                            ...prev,
-                            address,
-                            `Error: Command "${input.trim()}" not found. Type "help" for a list of commands.`,
-                        ]);
-                        break;
-                    }
-                }
+                handleCommand(input.toLowerCase());
                 setInput("");
                 cmdlineRef.current.textContent = "";
-                setSuggestions([]);
-                setSuggestionIndex(0);
-                setRefreshSuggestions(true);
             }
             // TODO: Add tab completion and history navigation
             // TODO: Add Backspace handling when not focused
@@ -186,31 +305,30 @@ export default function Terminal({}) {
         }
     }, [input, log]);
 
+    useEffect(() => {
+        if (state.error) {
+            print(state.error);
+        }
+    }, [state.error]);
+
     return (
         <div id="terminal-container" ref={scrollContainer}>
             <div id="terminal-log">
                 {/* Combines log entries into address and command pairs */}
-                {log.reduce((acc, line, i, arr) => {
-                    if (i % 2 === 0) {
-                        acc.push(
-                            <div key={i} className="log-entry">
-                                <div className="address">{line}</div>
-                                {arr[i + 1] !== undefined && (
-                                    <div className="cmd">
-                                        <span className="prompt">&gt;</span>
-                                        <div>{arr[i + 1]}</div>
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    }
-                    return acc;
-                }, [])}
+                {log.map((entry, i) => (
+                    <div key={i} className="log-entry">
+                        <div className="address">{entry.prompt}</div>
+                        <div className="cmd">
+                            <span className="prompt">&gt;</span>
+                            <div>{entry.text}</div>
+                        </div>
+                    </div>
+                ))}
             </div>
 
             <div id="terminal-input">
                 <div className="address" onChange={(e) => setAddress(e.target.value)}>
-                    @User
+                    {state.cwd}
                 </div>
                 <div id="input">
                     <span className="prompt">&gt;</span>
@@ -223,7 +341,6 @@ export default function Terminal({}) {
                         tabIndex={0}
                         onInput={(e) => {
                             setInput(e.currentTarget.textContent);
-                            setRefreshSuggestions(true);
                         }}
                     />
                 </div>
